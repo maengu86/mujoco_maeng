@@ -235,8 +235,21 @@
     .param-head {
       display: flex;
       justify-content: space-between;
-      align-items: baseline;
+      align-items: center;
+      gap: 10px;
       margin-bottom: 6px;
+    }
+
+    .param-title-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .param-name-wrap {
+      position: relative;
+      display: inline-block;
     }
 
     .param-name {
@@ -252,34 +265,50 @@
       color: var(--accent);
     }
 
+    .param-apply {
+      flex-shrink: 0;
+      padding: 6px 12px;
+      font-size: 0.85rem;
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      border-radius: 10px;
+    }
+
+    .param-apply.dirty {
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.18);
+    }
+
     input[type="range"] {
       width: 100%;
       accent-color: var(--accent);
     }
 
-    /* 호버 설명 카드 */
+    /* 이름에만 올렸을 때 위에 뜨고, 벗어나면 즉시 사라짐 (클릭 가로채지 않음) */
     .explain {
       position: absolute;
       left: 0;
-      right: 0;
-      top: calc(100% + 8px);
-      z-index: 20;
+      bottom: calc(100% + 8px);
+      width: min(320px, 70vw);
+      z-index: 30;
       background: #fff;
       border: 1px solid var(--line);
       border-radius: 14px;
       box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
-      padding: 14px 14px 12px;
+      padding: 12px 12px 10px;
       opacity: 0;
+      visibility: hidden;
       pointer-events: none;
-      transform: translateY(6px);
-      transition: opacity 0.18s ease, transform 0.18s ease;
+      transform: translateY(4px);
+      transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
+      max-height: 200px;
+      overflow: auto;
     }
 
-    .param:hover .explain,
-    .param:focus-within .explain {
+    .param-name-wrap:hover .explain {
       opacity: 1;
+      visibility: visible;
       transform: translateY(0);
-      pointer-events: auto;
     }
 
     .explain h4 {
@@ -464,11 +493,8 @@
 
         <section class="panel" style="margin-top:14px">
           <h2>파라미터</h2>
-          <p class="sub">이름에 마우스를 올리면 교육용 설명 카드가 나타납니다.</p>
+          <p class="sub">이름에 마우스를 올리면 설명이 나타납니다. 마우스를 떼면 사라집니다. 각 항목 오른쪽 <b>적용</b>으로 반영하세요.</p>
           <div class="params" id="params"></div>
-          <div class="row">
-            <button class="primary" onclick="applyParams()">파라미터 적용</button>
-          </div>
         </section>
 
         <section class="panel wizard" id="wizardPanel" style="display:none">
@@ -594,13 +620,29 @@
 
     let state = null;
     let paramValues = {};
+    let dirtyKeys = new Set();
     let wizardOpen = false;
 
     function el(id) { return document.getElementById(id); }
 
+    function markDirty(key) {
+      dirtyKeys.add(key);
+      const btn = el(`apply_${key}`);
+      if (btn) btn.classList.add("dirty");
+    }
+
+    function clearDirty() {
+      dirtyKeys.clear();
+      Object.keys(PARAM_META).forEach((key) => {
+        const btn = el(`apply_${key}`);
+        if (btn) btn.classList.remove("dirty");
+      });
+    }
+
     function buildParams(defaults) {
       const root = el("params");
       root.innerHTML = "";
+      dirtyKeys.clear();
       Object.keys(PARAM_META).forEach((key) => {
         const meta = PARAM_META[key];
         const val = (defaults && defaults[key] != null) ? defaults[key] : meta.min;
@@ -609,37 +651,49 @@
         box.className = "param";
         box.innerHTML = `
           <div class="param-head">
-            <span class="param-name" tabindex="0">${meta.label}</span>
-            <span class="param-val" id="val_${key}">${Number(val).toFixed(meta.step < 1 ? 2 : 0)}</span>
+            <div class="param-title-left">
+              <span class="param-name-wrap">
+                <span class="param-name" tabindex="0">${meta.label}</span>
+                <div class="explain">
+                  <h4>${meta.label}</h4>
+                  <hr />
+                  <dl>
+                    <div><dt>무엇인가</dt><dd>${meta.what}</dd></div>
+                    <div><dt>언제 수정하는가</dt><dd>${meta.when}</dd></div>
+                    <div>
+                      <dt>너무 높으면</dt>
+                      <dd class="chips">${meta.high.map(t => `<span class="chip bad">${t}</span>`).join("")}</dd>
+                    </div>
+                    <div>
+                      <dt>너무 낮으면</dt>
+                      <dd class="chips">${meta.low.map(t => `<span class="chip">${t}</span>`).join("")}</dd>
+                    </div>
+                    <div><dt>권장 범위</dt><dd><span class="chip ok">${meta.range}</span></dd></div>
+                    <div><dt>현재 값</dt><dd id="explain_${key}">${val}</dd></div>
+                  </dl>
+                </div>
+              </span>
+              <span class="param-val" id="val_${key}">${Number(val).toFixed(meta.step < 1 ? 2 : 0)}</span>
+            </div>
+            <button type="button" class="param-apply" id="apply_${key}">적용</button>
           </div>
           <input type="range" id="rng_${key}" min="${meta.min}" max="${meta.max}" step="${meta.step}" value="${val}" />
-          <div class="explain">
-            <h4>${meta.label}</h4>
-            <hr />
-            <dl>
-              <div><dt>무엇인가</dt><dd>${meta.what}</dd></div>
-              <div><dt>언제 수정하는가</dt><dd>${meta.when}</dd></div>
-              <div>
-                <dt>너무 높으면</dt>
-                <dd class="chips">${meta.high.map(t => `<span class="chip bad">${t}</span>`).join("")}</dd>
-              </div>
-              <div>
-                <dt>너무 낮으면</dt>
-                <dd class="chips">${meta.low.map(t => `<span class="chip">${t}</span>`).join("")}</dd>
-              </div>
-              <div><dt>권장 범위</dt><dd><span class="chip ok">${meta.range}</span></dd></div>
-              <div><dt>현재 값</dt><dd id="explain_${key}">${val}</dd></div>
-            </dl>
-          </div>
         `;
         root.appendChild(box);
         const rng = box.querySelector(`#rng_${key}`);
         rng.addEventListener("input", () => {
           const v = Number(rng.value);
           paramValues[key] = v;
+          markDirty(key);
           const text = v.toFixed(meta.step < 1 ? 2 : 0);
           el(`val_${key}`).textContent = text;
-          el(`explain_${key}`).textContent = text;
+          const ex = el(`explain_${key}`);
+          if (ex) ex.textContent = text;
+        });
+        box.querySelector(`#apply_${key}`).addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          applyParams();
         });
       });
     }
@@ -689,9 +743,10 @@
       if (s.params) {
         Object.keys(PARAM_META).forEach((key) => {
           if (s.params[key] == null) return;
-          // 사용자가 드래그 중이 아닐 때만 동기화
           const rng = el(`rng_${key}`);
           if (!rng) return;
+          // 사용자가 바꿔둔(미적용) 값은 서버 값으로 덮지 않음 → 초기화 방지
+          if (dirtyKeys.has(key)) return;
           if (document.activeElement === rng) return;
           const v = Number(s.params[key]);
           paramValues[key] = v;
@@ -748,11 +803,13 @@
 
     async function applyParams() {
       const s = await api("/api/params", { method: "POST", body: JSON.stringify(paramValues) });
+      clearDirty();
       renderStatus(s);
     }
 
     async function restoreDefaults() {
       const s = await api("/api/defaults", { method: "POST", body: "{}" });
+      clearDirty();
       if (s.defaults) buildParams(s.defaults);
       renderStatus(s);
     }

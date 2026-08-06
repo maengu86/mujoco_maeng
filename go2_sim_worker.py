@@ -164,56 +164,80 @@ def reset_to_home(model, data, qpos_addrs: list[int]) -> None:
         data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
     for name, addr in zip(JOINT_NAMES, qpos_addrs):
         data.qpos[addr] = HOME_Q[name]
+    if model.nv >= 6:
+        data.qvel[:] = 0.0
     mujoco.mj_forward(model, data)
 
 
+def zero_base_motion(model, data) -> None:
+    """서기/발들기 전환 시 미끄러짐 방지용 속도 제거."""
+    if model.nv >= 6:
+        data.qvel[0:6] = 0.0
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
+
+
 def target_pose(mode: str, t: float, params: dict[str, float]) -> dict[str, float]:
+    """목표 관절각 생성.
+
+    Go2 MuJoCo 관례(이 모델 기준):
+    - thigh↑(더 큼) → 발이 뒤로 → 스탠스에서 몸을 앞으로 밈
+    - thigh↓(더 작음) → 발이 앞으로 → 스윙에서 발을 앞으로 보냄
+    - calf↓(더 음수) → 무릎 굽힘 → 발 들림
+    - hip 은 좌우(외전)용. 전진에 쓰지 않음.
+    """
     q = dict(HOME_Q)
     freq = max(0.1, float(params["frequency"]))
-    lift = float(params["lift"])
-    swing = float(params["swing"])
-    forward = float(params["forward_bias"])
+    lift = _clamp(float(params["lift"]), 0.02, 0.55)
+    swing = _clamp(float(params["swing"]), 0.02, 0.35)
+    forward = _clamp(float(params["forward_bias"]), 0.0, 0.25)
     phase = (t * freq) % 1.0
 
-    if mode in ("stand", "home", "pause"):
-        return q
-
-    if mode == "motor_off":
+    if mode in ("stand", "home", "pause", "motor_off"):
         return q
 
     if mode == "lift_fl":
-        # 왼앞발 들기: thigh 올리고 calf 접기
-        q["FL_thigh_joint"] = HOME_Q["FL_thigh_joint"] - lift * 2.5
-        q["FL_calf_joint"] = HOME_Q["FL_calf_joint"] + lift * 1.5
+        # 왼앞발: 무릎을 더 굽히고 허벅지를 살짝 들어 발이 바닥에서 떨어지게
+        q["FL_thigh_joint"] = _clamp(HOME_Q["FL_thigh_joint"] + 0.35, -0.5, 2.8)
+        q["FL_calf_joint"] = _clamp(HOME_Q["FL_calf_joint"] - lift, -2.65, -0.9)
+        # 나머지 다리로 무게 지지 (살짝 낮게)
+        for leg in ("FR", "RL", "RR"):
+            q[f"{leg}_thigh_joint"] = HOME_Q[f"{leg}_thigh_joint"] + 0.06
         return q
 
     if mode in ("trot_inplace", "walk_forward", "walk_flat"):
         walk = mode in ("walk_forward", "walk_flat")
         for leg in LEG_ORDER:
             ph = (phase + TROT_PHASE[leg]) % 1.0
-            # 0~0.5 스윙, 0.5~1.0 스탠스
+            th0 = HOME_Q[f"{leg}_thigh_joint"]
+            ca0 = HOME_Q[f"{leg}_calf_joint"]
+            # 0~0.5 스윙(공중), 0.5~1.0 스탠스(지지)
             if ph < 0.5:
-                s = math.sin(ph * math.pi * 2.0)  # 0..1..0 over swing half? use sin(pi*2*ph) over 0-0.5 -> 0..1..0
-                s = math.sin(ph / 0.5 * math.pi)
-                thigh_delta = -lift * s
-                calf_delta = lift * 0.6 * s
-                hip_delta = 0.0
+                s = math.sin(ph / 0.5 * math.pi)  # 0→1→0
+                # 발 들기: calf 더 굽힘
+                q[f"{leg}_calf_joint"] = _clamp(ca0 - lift * s, -2.65, -0.9)
                 if walk:
-                    # 전진: 스윙 중 다리를 앞으로
-                    hip_delta = swing * math.sin(ph / 0.5 * math.pi) + forward
-                q[f"{leg}_thigh_joint"] = HOME_Q[f"{leg}_thigh_joint"] + thigh_delta
-                q[f"{leg}_calf_joint"] = HOME_Q[f"{leg}_calf_joint"] + calf_delta
-                q[f"{leg}_hip_joint"] = HOME_Q[f"{leg}_hip_joint"]  # abduction 유지
-                # thigh에 전후 스윙을 섞음
-                if walk:
-                    q[f"{leg}_thigh_joint"] += swing * 0.8 * math.sin(ph / 0.5 * math.pi)
-                    q[f"{leg}_hip_joint"] += hip_delta * 0.15
+                    # 스윙: 발을 앞으로 (thigh 감소) + 전진 편향
+                    q[f"{leg}_thigh_joint"] = _clamp(
+                        th0 - swing * s - forward * 0.35, -0.8, 2.8
+                    )
+                else:
+                    # 제자리 트로트: 전후 거의 없이 들기만
+                    q[f"{leg}_thigh_joint"] = _clamp(th0 - 0.04 * s, -0.8, 2.8)
             else:
+                st = (ph - 0.5) / 0.5  # 0→1
+                q[f"{leg}_calf_joint"] = ca0
                 if walk:
-                    # 스탠스에서 뒤로 밀기
-                    st = (ph - 0.5) / 0.5
-                    q[f"{leg}_thigh_joint"] = HOME_Q[f"{leg}_thigh_joint"] - swing * 0.5 * st
-                    q[f"{leg}_hip_joint"] = HOME_Q[f"{leg}_hip_joint"] - forward * 0.1
+                    # 스탠스: 발을 뒤로 밀어 몸 전진 (thigh 증가)
+                    q[f"{leg}_thigh_joint"] = _clamp(
+                        th0 + swing * st + forward * 0.8, -0.8, 2.8
+                    )
+                else:
+                    q[f"{leg}_thigh_joint"] = _clamp(th0 + 0.03 * st, -0.8, 2.8)
+            # hip(외전)은 home 유지 — 전진에 쓰면 옆으로 밀림
+            q[f"{leg}_hip_joint"] = HOME_Q[f"{leg}_hip_joint"]
         return q
 
     # 실험/지형 모드는 걷기 또는 서기 기반으로 처리
@@ -378,6 +402,10 @@ def run_worker(scene_path: str, headless: bool = False, mock: bool = False) -> i
             if mode == "home":
                 reset_to_home(model, data, qpos_addrs)
                 mode = "stand"
+                sim_t0 = time.time()
+            elif mode in ("stand", "lift_fl", "pause"):
+                # 이전 걷기 관성으로 밀리듯 가는 현상 방지
+                zero_base_motion(model, data)
                 sim_t0 = time.time()
             emit({"type": "ack", "cmd": "set_mode", "mode": mode})
             return True

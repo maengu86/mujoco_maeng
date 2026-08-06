@@ -46,9 +46,10 @@ def main() -> int:
         snap = MANAGER.switch_scene(key)
         assert not snap["switching"]
         assert snap["scene"] == key
+        assert snap.get("viewer_ready") is True, snap
         assert "오류" not in (snap["ui_status"] or ""), snap
-        # 전환 중에는 이전 worker가 없어야 함 (현재 1개만)
-        time.sleep(0.05)
+        # 종료 반영 대기 후 잔여 확인
+        time.sleep(0.2)
         living = count_workers()
         assert living <= 1, f"worker too many: {living}"
 
