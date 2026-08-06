@@ -31,12 +31,18 @@ git pull
 # 3) 환경 설치
 bash scripts/setup_env.sh
 
-# 4) 실행 (MuJoCo Viewer + HTML 패널 자동 오픈)
+# 4) 점검 (선택)
+bash scripts/check_env.sh
+
+# 5) 실행 (MuJoCo Viewer + HTML 패널 동시 오픈)
 bash scripts/run_lab.sh
 ```
 
 브라우저: http://127.0.0.1:8765  
-종료: `Ctrl+C` (worker도 함께 종료)
+종료: `Ctrl+C` (MuJoCo worker도 함께 종료)
+
+**중요 (macOS):** 반드시 `mjpython` 으로 실행하세요.  
+일반 `python go2_korean_control.py` 를 쓰면 HTML만 뜨고 MuJoCo 창이 안 열릴 수 있습니다.
 
 ### macOS Apple Silicon 수동 실행
 
@@ -46,12 +52,21 @@ source .venv/bin/activate
 ./.venv/bin/mjpython go2_korean_control.py
 ```
 
-### Linux / mjpython 없는 환경
+### Linux
 
 ```bash
 cd mujoco_maeng
 source .venv/bin/activate
 python go2_korean_control.py
+```
+
+### HTML만 뜨고 MuJoCo가 안 뜰 때
+
+```bash
+bash scripts/check_env.sh
+tail -n 80 go2_worker.log
+# 그다음 반드시 mjpython 으로 재실행
+bash scripts/run_lab.sh
 ```
 
 ## 구조 설명

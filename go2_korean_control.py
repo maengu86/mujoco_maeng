@@ -35,21 +35,49 @@ ROOT = Path(__file__).resolve().parent
 HTML_PATH = ROOT / "go2_control_panel_ko.html"
 WORKER_PATH = ROOT / "go2_sim_worker.py"
 LOG_PATH = ROOT / "go2_experiment_log.csv"
+WORKER_LOG_PATH = ROOT / "go2_worker.log"
 SCENE_FLAT = ROOT / "unitree_robots" / "go2" / "scene.xml"
 SCENE_TERRAIN = ROOT / "unitree_robots" / "go2" / "scene_terrain.xml"
 
 HOST = "127.0.0.1"
 PORT = 8765
 
-DEFAULT_PARAMS: dict[str, float] = {
-    "kp": 40.0,
-    "kd": 2.0,
-    "frequency": 1.5,
-    "lift": 0.12,
-    "swing": 0.08,
-    "forward_bias": 0.05,
-    "torque_scale": 1.0,
-}
+from go2_defaults import DEFAULT_PARAMS  # noqa: E402
+
+
+def resolve_worker_python() -> str:
+    """macOS Viewer는 mjpython이 필수. worker도 반드시 mjpython으로 띄운다."""
+    env = os.environ.get("GO2_PYTHON", "").strip()
+    if env and Path(env).exists():
+        return env
+
+    candidates: list[Path] = []
+    exe = Path(sys.executable)
+    candidates.append(exe)
+    candidates.append(exe.with_name("mjpython"))
+    candidates.append(ROOT / ".venv" / "bin" / "mjpython")
+    candidates.append(ROOT / ".venv" / "bin" / "python")
+
+    which = None
+    try:
+        import shutil
+
+        which = shutil.which("mjpython")
+    except Exception:  # noqa: BLE001
+        which = None
+    if which:
+        candidates.append(Path(which))
+
+    # 1순위: 이름에 mjpython 이 들어간 실행파일
+    for c in candidates:
+        if c.is_file() and "mjpython" in c.name:
+            return str(c.resolve())
+
+    # 2순위: 현재 인터프리터
+    if exe.is_file():
+        return str(exe.resolve())
+
+    return sys.executable
 
 MODE_LABELS = {
     "stand": "서기",
@@ -113,6 +141,8 @@ class WorkerManager:
         self.ui_status = "대기 중"
         self.switching = False
         self.error: str | None = None
+        self.viewer_ready = False
+        self.worker_python = resolve_worker_python()
         self.params = dict(DEFAULT_PARAMS)
         self.mode = "stand"
         self.paused = False
@@ -127,6 +157,7 @@ class WorkerManager:
         self.wizard_index = -1  # -1 = 비활성
         self._reader: threading.Thread | None = None
         self._stop_reader = threading.Event()
+        self._stderr_fp = None
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -135,6 +166,8 @@ class WorkerManager:
                 "switching": self.switching,
                 "scene": self.scene_key,
                 "error": self.error,
+                "viewer_ready": self.viewer_ready,
+                "worker_python": self.worker_python,
                 "params": dict(self.params),
                 "mode": self.mode,
                 "mode_label": MODE_LABELS.get(self.mode, self.mode),
@@ -144,6 +177,8 @@ class WorkerManager:
                 "wizard_index": self.wizard_index,
                 "wizard_steps": WIZARD_STEPS,
                 "defaults": dict(DEFAULT_PARAMS),
+                "log_path": str(LOG_PATH),
+                "worker_log_path": str(WORKER_LOG_PATH),
             }
 
     def _alive_unlocked(self) -> bool:
@@ -210,22 +245,35 @@ class WorkerManager:
                     self.paused = bool(msg["paused"])
             elif mtype == "ready":
                 self.error = None
+                self.viewer_ready = True
                 label = "평지 실행 중" if self.scene_key == "flat" else "지형 실행 완료"
                 self._set_status(label)
+                print(f"[main] Viewer ready: {msg.get('message', '')}", flush=True)
             elif mtype == "error":
                 self.error = str(msg.get("message", "MuJoCo 실행 오류"))
+                self.viewer_ready = False
                 self._set_status("MuJoCo 실행 오류")
+                print(f"[main] worker error: {self.error}", file=sys.stderr, flush=True)
             elif mtype == "exited":
                 self.last_status["alive"] = False
+                self.viewer_ready = False
                 if not self.switching:
                     self._set_status("Viewer 종료됨")
 
     def stop_worker(self, reason: str = "Viewer 종료 중") -> None:
         with self._lock:
             self._set_status(reason)
+            self.viewer_ready = False
             proc = self.proc
             self.proc = None
+            fp = self._stderr_fp
+            self._stderr_fp = None
         if proc is None:
+            if fp:
+                try:
+                    fp.close()
+                except Exception:  # noqa: BLE001
+                    pass
             return
         try:
             if proc.poll() is None and proc.stdin is not None:
@@ -237,7 +285,7 @@ class WorkerManager:
             try:
                 proc.wait(timeout=2.5)
             except subprocess.TimeoutExpired:
-                self._kill_proc_tree(proc)
+                self._kill_proc(proc)
                 try:
                     proc.wait(timeout=1.5)
                 except subprocess.TimeoutExpired:
@@ -250,42 +298,48 @@ class WorkerManager:
             self._stop_reader.clear()
             try:
                 if proc.poll() is None:
-                    self._kill_proc_tree(proc)
+                    self._kill_proc(proc)
             except Exception:  # noqa: BLE001
                 pass
+            if fp:
+                try:
+                    fp.close()
+                except Exception:  # noqa: BLE001
+                    pass
 
     @staticmethod
-    def _kill_proc_tree(proc: subprocess.Popen[str]) -> None:
+    def _kill_proc(proc: subprocess.Popen[str]) -> None:
+        """macOS GUI worker는 새 세션을 쓰지 않으므로 일반 terminate/kill 사용."""
         try:
             if proc.poll() is None:
-                os.killpg(proc.pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError, OSError):
-            try:
                 proc.terminate()
-            except Exception:  # noqa: BLE001
-                pass
+        except Exception:  # noqa: BLE001
+            pass
         time.sleep(0.05)
+        try:
+            if proc.poll() is None:
+                proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+        # process group 이 있는 경우에만 추가 정리
         try:
             if proc.poll() is None:
                 os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):
-            try:
-                proc.kill()
-            except Exception:  # noqa: BLE001
-                pass
+            pass
 
     def start_worker(self, scene_key: str) -> None:
         scene = self._scene_path(scene_key)
         mock = os.environ.get("GO2_MOCK", "").strip() in ("1", "true", "yes")
         if not scene.exists():
             if mock:
-                # mock 테스트에서는 장면 파일이 없어도 경로만 전달
                 scene.parent.mkdir(parents=True, exist_ok=True)
                 if not scene.exists():
                     scene.write_text("<!-- mock scene placeholder -->\n", encoding="utf-8")
             else:
                 with self._lock:
                     self.error = f"장면 파일 없음: {scene}"
+                    self.viewer_ready = False
                     self._set_status("MuJoCo 실행 오류")
                 raise FileNotFoundError(scene)
 
@@ -294,73 +348,97 @@ class WorkerManager:
             self._set_status(loading)
             self.scene_key = scene_key
             self.error = None
+            self.viewer_ready = False
 
         headless = os.environ.get("GO2_HEADLESS", "").strip() in ("1", "true", "yes")
-        cmd = [sys.executable, str(WORKER_PATH), "--scene", str(scene)]
+        py = resolve_worker_python()
+        self.worker_python = py
+        cmd = [py, str(WORKER_PATH), "--scene", str(scene)]
         if mock:
             cmd.append("--mock")
         elif headless:
             cmd.append("--headless")
 
+        # stderr를 PIPE로 막으면 MuJoCo 로그가 버퍼를 채워 worker가 멈출 수 있다.
+        # 파일로 보내서 Viewer가 실제로 뜨게 한다.
+        WORKER_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        stderr_fp = WORKER_LOG_PATH.open("a", encoding="utf-8")
+        stderr_fp.write("\n" + "=" * 60 + "\n")
+        stderr_fp.write(f"cmd: {' '.join(cmd)}\n")
+        stderr_fp.write(f"cwd: {ROOT}\n")
+        stderr_fp.flush()
+
+        print(f"[main] worker 시작: {' '.join(cmd)}", flush=True)
+        if sys.platform == "darwin" and "mjpython" not in Path(py).name and not mock:
+            msg = (
+                "macOS에서는 mjpython으로 실행해야 MuJoCo 창이 열립니다. "
+                f"현재 worker python={py}"
+            )
+            print(f"[경고] {msg}", file=sys.stderr, flush=True)
+
+        # macOS GUI: start_new_session=False (창이 안 뜨는 문제 방지)
+        # Linux: True 여도 무방하나, 종료 단순화를 위해 False로 통일
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=stderr_fp,
             text=True,
             bufsize=1,
             cwd=str(ROOT),
-            start_new_session=True,
+            start_new_session=False,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
         with self._lock:
             self.proc = proc
+            self._stderr_fp = stderr_fp
             self._stop_reader.clear()
             self._reader = threading.Thread(
                 target=self._read_loop, args=(proc,), daemon=True
             )
             self._reader.start()
 
-        # stderr 모니터링 (죽으면 오류 표시)
-        def _stderr_watch() -> None:
-            assert proc.stderr is not None
-            chunks: list[str] = []
-            try:
-                for line in proc.stderr:
-                    chunks.append(line)
-            except Exception:  # noqa: BLE001
-                return
-            if proc.poll() not in (None, 0) and chunks:
-                with self._lock:
-                    if self.proc is proc and not self.switching:
-                        self.error = "MuJoCo 실행 오류"
-                        self._set_status("MuJoCo 실행 오류")
-
-        threading.Thread(target=_stderr_watch, daemon=True).start()
-
-        # 준비될 때까지 짧게 대기 (최대 8초)
-        deadline = time.time() + 8.0
+        # Viewer ready 를 받을 때까지 대기 (최대 20초 — 모델 로드 시간 감안)
+        deadline = time.time() + 20.0
+        ready = False
         while time.time() < deadline:
             with self._lock:
-                if self.ui_status in ("평지 실행 중", "지형 실행 완료"):
+                if self.viewer_ready:
+                    ready = True
                     break
                 if self.error:
                     break
                 if proc.poll() is not None:
-                    self.error = "MuJoCo 실행 오류"
+                    tail = ""
+                    try:
+                        tail = WORKER_LOG_PATH.read_text(encoding="utf-8")[-800:]
+                    except Exception:  # noqa: BLE001
+                        pass
+                    self.error = "MuJoCo 실행 오류 (worker 종료). go2_worker.log 확인"
                     self._set_status("MuJoCo 실행 오류")
+                    print(f"[main] worker 조기 종료. log tail:\n{tail}", file=sys.stderr, flush=True)
                     break
             time.sleep(0.05)
 
-        # 파라미터·home 동기화
+        if not ready and not self.error:
+            with self._lock:
+                self.error = "MuJoCo Viewer가 열리지 않았습니다. go2_worker.log 를 확인하세요."
+                self._set_status("MuJoCo 실행 오류")
+            print("[main] Viewer ready timeout — HTML만 열린 상태일 수 있음", file=sys.stderr, flush=True)
+            return
+
+        if not ready:
+            return
+
+        # 파라미터·home 동기화 (Viewer가 열린 뒤에만)
         self.send({"cmd": "set_params", **self.params})
         self.send({"cmd": "home"})
         with self._lock:
             self.mode = "stand"
             self.paused = False
-            if not self.error:
-                self._set_status(
-                    "평지 실행 중" if scene_key == "flat" else "지형 실행 완료"
-                )
+            self._set_status(
+                "평지 실행 중" if scene_key == "flat" else "지형 실행 완료"
+            )
 
     def switch_scene(self, scene_key: str) -> dict[str, Any]:
         with self._lock:
@@ -411,10 +489,15 @@ class WorkerManager:
         return self.snapshot()
 
     def restore_defaults(self) -> dict[str, Any]:
+        """초기 기본값 복원 + home 자세 초기화 (v2 동작)."""
         with self._lock:
             self.params = dict(DEFAULT_PARAMS)
             payload = {"cmd": "set_params", **self.params}
         self.send(payload)
+        self.send({"cmd": "home"})
+        with self._lock:
+            self.mode = "stand"
+            self.paused = False
         return self.snapshot()
 
     def set_wizard(self, index: int) -> dict[str, Any]:
@@ -514,7 +597,13 @@ def append_log(memo: str = "") -> dict[str, Any]:
     ]
     with LOG_PATH.open("a", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow(row)
-    return {"ok": True, "row": dict(zip(CSV_HEADER, row))}
+    return {
+        "ok": True,
+        "row": dict(zip(CSV_HEADER, row)),
+        "filename": LOG_PATH.name,
+        "path": str(LOG_PATH),
+        "message": f"저장 완료: {LOG_PATH.name} ({LOG_PATH})",
+    }
 
 
 def read_log_rows() -> list[dict[str, str]]:
@@ -757,10 +846,26 @@ def main() -> int:
         return 1
     if not SCENE_FLAT.exists():
         print(
-            f"[경고] 평지 장면이 없습니다: {SCENE_FLAT}\n"
-            "unitree_mujoco 루트에서 실행하고 unitree_robots/go2/scene.xml 이 있는지 확인하세요.",
+            f"[오류] 평지 장면이 없습니다: {SCENE_FLAT}\n"
+            "저장소 루트에서 실행하세요. unitree_robots/go2/scene.xml 이 필요합니다.",
             file=sys.stderr,
         )
+        return 1
+
+    mock = os.environ.get("GO2_MOCK", "").strip() in ("1", "true", "yes")
+    worker_py = resolve_worker_python()
+    if sys.platform == "darwin" and "mjpython" not in Path(worker_py).name and not mock:
+        print("=" * 60, file=sys.stderr)
+        print("[오류] macOS 에서 MuJoCo 창을 열려면 mjpython 이 필요합니다.", file=sys.stderr)
+        print(f"  현재 감지된 python: {worker_py}", file=sys.stderr)
+        print("  아래처럼 실행하세요:", file=sys.stderr)
+        print("    bash scripts/setup_env.sh", file=sys.stderr)
+        print("    bash scripts/run_lab.sh", file=sys.stderr)
+        print("  또는:", file=sys.stderr)
+        print("    source .venv/bin/activate", file=sys.stderr)
+        print("    ./.venv/bin/mjpython go2_korean_control.py", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+        return 2
 
     ensure_log()
 
@@ -770,21 +875,29 @@ def main() -> int:
 
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     print("=" * 56)
-    print("  Go2 강화학습 입문 실험실")
+    print("  Go2 한글 조작기 (입문 실험실)")
     print(f"  브라우저: http://{HOST}:{PORT}")
-    print("  Ctrl+C 로 종료 (worker 함께 종료)")
+    print(f"  worker : {worker_py}")
+    print(f"  장면   : {SCENE_FLAT}")
+    print(f"  기록   : {LOG_PATH}")
+    print(f"  worker로그: {WORKER_LOG_PATH}")
+    print("  Ctrl+C 로 종료 (MuJoCo worker도 함께 종료)")
     print("=" * 56)
 
-    # 기본 평지 worker 시작
+    # 먼저 MuJoCo worker(Viewer)를 띄운 뒤 브라우저를 연다
     try:
-        if SCENE_FLAT.exists():
-            MANAGER.start_worker("flat")
-        else:
-            MANAGER.ui_status = "장면 파일 없음 — UI만 대기"
+        MANAGER.start_worker("flat")
     except Exception as exc:  # noqa: BLE001
         MANAGER.error = str(exc)
         MANAGER.ui_status = "MuJoCo 실행 오류"
-        print(f"[경고] worker 시작 실패: {exc}", file=sys.stderr)
+        print(f"[오류] worker 시작 실패: {exc}", file=sys.stderr)
+
+    if not MANAGER.viewer_ready and not mock:
+        print(
+            "[오류] MuJoCo Viewer가 열리지 않았습니다. HTML만 보이면 실패 상태입니다.\n"
+            f"  로그: {WORKER_LOG_PATH}",
+            file=sys.stderr,
+        )
 
     try:
         webbrowser.open(f"http://{HOST}:{PORT}")

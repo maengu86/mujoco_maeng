@@ -502,6 +502,7 @@
           <p class="sub">CSV(<code>go2_experiment_log.csv</code>)에 저장됩니다.</p>
           <label for="memo" style="display:block;margin-bottom:6px;color:var(--muted)">메모</label>
           <textarea id="memo" placeholder="예: Kp를 60으로 올리니 다리가 떨리며 넘어짐"></textarea>
+          <p class="sub" id="logHint" style="margin-top:8px">저장 위치: go2_experiment_log.csv</p>
           <div class="row">
             <button class="primary" onclick="saveLog()">기록 저장</button>
             <button onclick="loadAnalysis()">결과 분석</button>
@@ -555,21 +556,21 @@
       },
       lift: {
         label: "Lift",
-        min: 0.02, max: 0.3, step: 0.01,
+        min: 0.02, max: 0.45, step: 0.01,
         what: "발을 들어 올리는 높이",
         when: "턱·계단을 넘지 못할 때",
         high: ["몸이 들썩임", "착지가 거칠어짐"],
         low: ["발이 바닥에 걸림", "전진 실패"],
-        range: "0.08~0.18",
+        range: "0.20~0.32",
       },
       swing: {
         label: "Swing",
-        min: 0.02, max: 0.25, step: 0.01,
+        min: 0.02, max: 0.35, step: 0.01,
         what: "다리가 앞뒤로 움직이는 보폭",
         when: "더 멀리/빠르게 걷고 싶을 때",
         high: ["미끄러짐", "몸통이 앞뒤로 흔들림"],
         low: ["제자리 걸음", "전진 거의 없음"],
-        range: "0.06~0.14",
+        range: "0.12~0.22",
       },
       forward_bias: {
         label: "Forward Bias",
@@ -653,12 +654,20 @@
 
     function renderStatus(s) {
       state = s;
-      const text = s.ui_status || "—";
+      let text = s.ui_status || "—";
+      if (s.error) text = s.error;
+      else if (!s.viewer_ready && !s.switching && text.indexOf("실행") >= 0) {
+        text = "MuJoCo Viewer 대기 중… (창이 안 뜨면 go2_worker.log 확인)";
+      }
       el("statusText").textContent = text;
       const dot = el("statusDot");
       dot.className = "dot";
-      if (text.includes("오류")) dot.classList.add("err");
-      else if (s.switching || text.includes("종료") || text.includes("불러")) dot.classList.add("busy");
+      if (text.includes("오류") || s.error) dot.classList.add("err");
+      else if (s.switching || text.includes("종료") || text.includes("불러") || text.includes("대기")) dot.classList.add("busy");
+
+      if (s.log_path) {
+        el("logHint").textContent = "저장 위치: " + s.log_path;
+      }
 
       const busy = !!s.switching;
       el("btnFlat").disabled = busy;
@@ -750,10 +759,12 @@
 
     async function saveLog() {
       const memo = el("memo").value || "";
-      await api("/api/log", { method: "POST", body: JSON.stringify({ memo }) });
+      const r = await api("/api/log", { method: "POST", body: JSON.stringify({ memo }) });
       el("memo").value = "";
       await loadAnalysis();
-      alert("기록을 저장했습니다.");
+      const msg = r.message || ("저장 완료: " + (r.filename || "go2_experiment_log.csv"));
+      if (r.path) el("logHint").textContent = "저장 위치: " + r.path;
+      alert(msg);
     }
 
     async function loadAnalysis() {
@@ -791,9 +802,10 @@
       renderStatus(s);
     }
 
+    // v2 초기 기본값
     buildParams({
-      kp: 40, kd: 2, frequency: 1.5, lift: 0.12,
-      swing: 0.08, forward_bias: 0.05, torque_scale: 1.0,
+      kp: 40, kd: 1.5, frequency: 1.2, lift: 0.28,
+      swing: 0.18, forward_bias: 0.05, torque_scale: 1.0,
     });
     refresh();
     setInterval(refresh, 400);

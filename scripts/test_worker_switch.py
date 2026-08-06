@@ -29,10 +29,10 @@ def count_workers() -> int:
 def main() -> int:
     print("[test] mock worker 시작 (평지)")
     MANAGER.start_worker("flat")
-    assert MANAGER._alive_unlocked() or MANAGER.proc is not None
     time.sleep(0.3)
     snap = MANAGER.snapshot()
-    assert "실행" in snap["ui_status"] or snap["ui_status"].endswith("완료") or "평지" in snap["ui_status"], snap
+    assert snap.get("viewer_ready") is True, snap
+    assert "평지" in snap["ui_status"] or "실행" in snap["ui_status"], snap
 
     print("[test] 모드/파라미터")
     MANAGER.set_params({"kp": 42, "kd": 2.2})

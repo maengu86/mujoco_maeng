@@ -20,6 +20,8 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from go2_defaults import DEFAULT_PARAMS
+
 # ---------------------------------------------------------------------------
 # 기본 자세 / 관절
 # ---------------------------------------------------------------------------
@@ -53,16 +55,6 @@ HOME_Q = {
     "RR_hip_joint": 0.0,
     "RR_thigh_joint": 0.9,
     "RR_calf_joint": -1.8,
-}
-
-DEFAULT_PARAMS = {
-    "kp": 40.0,
-    "kd": 2.0,
-    "frequency": 1.5,
-    "lift": 0.12,
-    "swing": 0.08,
-    "forward_bias": 0.05,
-    "torque_scale": 1.0,
 }
 
 LEG_ORDER = ["FL", "FR", "RL", "RR"]
@@ -339,14 +331,8 @@ def run_worker(scene_path: str, headless: bool = False, mock: bool = False) -> i
     last_status = 0.0
 
     reset_to_home(model, data, qpos_addrs)
-
-    emit(
-        {
-            "type": "ready",
-            "scene": str(scene),
-            "message": "worker 준비 완료",
-        }
-    )
+    # ready 는 Viewer가 실제로 열린 뒤에만 보낸다.
+    # (이전에 모델 로드 직후 ready를 보내 HTML만 성공처럼 보이던 문제를 방지)
 
     def status_payload() -> dict[str, Any]:
         # free joint: qpos[0:3] pos, qpos[3:7] quat
@@ -432,6 +418,14 @@ def run_worker(scene_path: str, headless: bool = False, mock: bool = False) -> i
     try:
         if headless:
             # CI/컴파일·연동 테스트용 (Viewer 없음)
+            emit(
+                {
+                    "type": "ready",
+                    "scene": str(scene),
+                    "viewer": False,
+                    "message": "headless worker 준비 완료",
+                }
+            )
             while True:
                 for cmd in try_read_commands(0.0):
                     if not handle_cmd(cmd):
@@ -447,7 +441,17 @@ def run_worker(scene_path: str, headless: bool = False, mock: bool = False) -> i
         else:
             import mujoco.viewer
 
+            print(f"[worker] Viewer 여는 중: {scene}", file=sys.stderr, flush=True)
             with mujoco.viewer.launch_passive(model, data) as viewer:
+                emit(
+                    {
+                        "type": "ready",
+                        "scene": str(scene),
+                        "viewer": True,
+                        "message": "MuJoCo Viewer 실행 완료",
+                    }
+                )
+                print("[worker] Viewer 실행 완료", file=sys.stderr, flush=True)
                 while viewer.is_running():
                     for cmd in try_read_commands(0.0):
                         if not handle_cmd(cmd):
@@ -476,6 +480,7 @@ def run_worker(scene_path: str, headless: bool = False, mock: bool = False) -> i
                 "trace": traceback.format_exc(),
             }
         )
+        print(traceback.format_exc(), file=sys.stderr, flush=True)
         return 1
 
 
