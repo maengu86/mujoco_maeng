@@ -1,0 +1,4 @@
+# Go2 입문 실험실 — Python 의존성
+# Python 3.10+ 권장 (macOS Apple Silicon: 3.11~3.14 가능)
+mujoco>=3.1.0,<4
+numpy>=1.24
