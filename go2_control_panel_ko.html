@@ -485,10 +485,14 @@
             <button onclick="setMode('lift_fl')">왼앞발 들기</button>
             <button onclick="setMode('trot_inplace')">제자리 트로트</button>
             <button onclick="setMode('walk_forward')">앞으로 걷기 실험</button>
-            <button onclick="setMode('motor_off')">모터 힘 끄기</button>
             <button onclick="setMode('home')">home 초기화</button>
-            <button onclick="setMode('pause')">일시정지</button>
+            <button onclick="setMode('pause')" title="동작을 멈춤. 토크 명령을 0으로 두고 관찰">일시정지</button>
+            <button onclick="setMode('motor_off')" title="모터 힘을 제거. 다리가 풀려 주저앉을 수 있음">모터 힘 끄기</button>
           </div>
+          <p class="sub" style="margin-top:12px">
+            <b>일시정지</b> = 지금 동작을 멈춰 두고 관찰&nbsp;&nbsp;|&nbsp;&nbsp;
+            <b>모터 힘 끄기</b> = 힘을 빼서 주저앉을 수 있음 (힘의 역할을 보는 실험)
+          </p>
         </section>
 
         <section class="panel" style="margin-top:14px">
