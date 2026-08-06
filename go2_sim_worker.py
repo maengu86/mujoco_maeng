@@ -179,14 +179,22 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
-def target_pose(mode: str, t: float, params: dict[str, float]) -> dict[str, float]:
+def target_pose(
+    mode: str,
+    t: float,
+    params: dict[str, float],
+    *,
+    lateral_y: float = 0.0,
+    lateral_vy: float = 0.0,
+    roll: float = 0.0,
+) -> dict[str, float]:
     """목표 관절각 생성.
 
     Go2 MuJoCo 관례(이 모델 기준):
     - thigh↑(더 큼) → 발이 뒤로 → 스탠스에서 몸을 앞으로 밈
     - thigh↓(더 작음) → 발이 앞으로 → 스윙에서 발을 앞으로 보냄
     - calf↓(더 음수) → 무릎 굽힘 → 발 들림
-    - hip 은 좌우(외전)용. 전진에 쓰지 않음.
+    - hip 은 좌우(외전) 보정용 (중심 유지)
     """
     q = dict(HOME_Q)
     freq = max(0.1, float(params["frequency"]))
@@ -209,6 +217,13 @@ def target_pose(mode: str, t: float, params: dict[str, float]) -> dict[str, floa
 
     if mode in ("trot_inplace", "walk_forward", "walk_flat"):
         walk = mode in ("walk_forward", "walk_flat")
+        # 옆으로 치우침 보정: y/vy/roll 을 hip 외전으로 되돌림
+        # (보행에 횡방향  Stabilizer 가 없으면 경사에서 한쪽으로 흘러 떨어짐)
+        hip_corr = _clamp(
+            -0.55 * lateral_y - 0.22 * lateral_vy - 0.35 * roll,
+            -0.25,
+            0.25,
+        )
         for leg in LEG_ORDER:
             ph = (phase + TROT_PHASE[leg]) % 1.0
             th0 = HOME_Q[f"{leg}_thigh_joint"]
@@ -216,8 +231,9 @@ def target_pose(mode: str, t: float, params: dict[str, float]) -> dict[str, floa
             # 0~0.5 스윙(공중), 0.5~1.0 스탠스(지지)
             if ph < 0.5:
                 s = math.sin(ph / 0.5 * math.pi)  # 0→1→0
-                # 발 들기: calf 더 굽힘
-                q[f"{leg}_calf_joint"] = _clamp(ca0 - lift * s, -2.65, -0.9)
+                # 발 들기: calf 더 굽힘 (경사에서는 과도한 lift 억제)
+                lift_use = lift * (0.65 if walk else 1.0)
+                q[f"{leg}_calf_joint"] = _clamp(ca0 - lift_use * s, -2.65, -0.9)
                 if walk:
                     # 스윙: 발을 앞으로 (thigh 감소) + 전진 편향
                     q[f"{leg}_thigh_joint"] = _clamp(
@@ -236,15 +252,32 @@ def target_pose(mode: str, t: float, params: dict[str, float]) -> dict[str, floa
                     )
                 else:
                     q[f"{leg}_thigh_joint"] = _clamp(th0 + 0.03 * st, -0.8, 2.8)
-            # hip(외전)은 home 유지 — 전진에 쓰면 옆으로 밀림
-            q[f"{leg}_hip_joint"] = HOME_Q[f"{leg}_hip_joint"]
+            # 좌/우 hip 대칭 보정 (한쪽으로 빨려 들어가는 것 완화)
+            if leg in ("FL", "RL"):
+                q[f"{leg}_hip_joint"] = _clamp(hip_corr, -0.35, 0.35)
+            else:
+                q[f"{leg}_hip_joint"] = _clamp(-hip_corr, -0.35, 0.35)
         return q
 
     # 실험/지형 모드는 걷기 또는 서기 기반으로 처리
     if mode in ("kp_test", "kd_test", "lift_test", "swing_test"):
-        return target_pose("trot_inplace", t, params)
+        return target_pose(
+            "trot_inplace",
+            t,
+            params,
+            lateral_y=lateral_y,
+            lateral_vy=lateral_vy,
+            roll=roll,
+        )
     if mode in ("slope", "low_step", "stairs"):
-        return target_pose("walk_forward", t, params)
+        return target_pose(
+            "walk_forward",
+            t,
+            params,
+            lateral_y=lateral_y,
+            lateral_vy=lateral_vy,
+            roll=roll,
+        )
 
     return q
 
@@ -266,9 +299,11 @@ def apply_pd(
         if motor_off:
             data.ctrl[actuator_ids[i]] = 0.0
             continue
+        # hip 보정은 조금 더 세게
+        k_scale = 1.35 if "hip" in name else 1.0
         q = data.qpos[qpos_addrs[i]]
         dq = data.qvel[qvel_addrs[i]]
-        tau = (kp * (q_des[name] - q) - kd * dq) * scale
+        tau = (kp * k_scale * (q_des[name] - q) - kd * dq) * scale
         # actuator ctrlrange 클램프
         lo, hi = model.actuator_ctrlrange[actuator_ids[i]]
         if hi > lo:
@@ -431,7 +466,20 @@ def run_worker(scene_path: str, headless: bool = False, mock: bool = False) -> i
         if paused:
             data.ctrl[:] = 0.0
             return
-        q_des = target_pose(mode, t, params)
+        y = float(data.qpos[1]) if model.nq >= 2 else 0.0
+        vy = float(data.qvel[1]) if model.nv >= 2 else 0.0
+        roll = 0.0
+        if model.nq >= 7:
+            qw, qx, qy, qz = [float(v) for v in data.qpos[3:7]]
+            roll, _, _ = quat_to_rpy(qw, qx, qy, qz)
+        q_des = target_pose(
+            mode,
+            t,
+            params,
+            lateral_y=y,
+            lateral_vy=vy,
+            roll=roll,
+        )
         apply_pd(
             model,
             data,
