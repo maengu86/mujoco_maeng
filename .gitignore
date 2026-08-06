@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+go2_experiment_log.csv
+*.log
+.DS_Store

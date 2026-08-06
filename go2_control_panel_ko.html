@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Go2 강화학습 입문 실험실</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg0: #f7f9fc;
+      --bg1: #eef3f8;
+      --ink: #1a2332;
+      --muted: #5b6b7c;
+      --line: #d5dee8;
+      --card: #ffffff;
+      --accent: #0f766e;
+      --accent-soft: #ccfbf1;
+      --warn: #b45309;
+      --danger: #b91c1c;
+      --ok: #047857;
+      --shadow: 0 10px 30px rgba(26, 35, 50, 0.06);
+      --radius: 16px;
+      --font-display: "Outfit", "Gowun Dodum", sans-serif;
+      --font-body: "Gowun Dodum", "Outfit", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      color: var(--ink);
+      font-family: var(--font-body);
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #dbeafe 0%, transparent 55%),
+        radial-gradient(900px 480px at 100% 0%, #ccfbf1 0%, transparent 50%),
+        linear-gradient(180deg, var(--bg0), var(--bg1));
+      min-height: 100%;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.35;
+      background-image:
+        linear-gradient(rgba(15, 118, 110, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(15, 118, 110, 0.04) 1px, transparent 1px);
+      background-size: 28px 28px;
+      z-index: 0;
+    }
+
+    .wrap {
+      position: relative;
+      z-index: 1;
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 20px 60px;
+    }
+
+    header.hero {
+      padding: 8px 0 22px;
+      animation: rise 0.7s ease both;
+    }
+
+    .brand {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: clamp(2rem, 4vw, 2.8rem);
+      letter-spacing: -0.03em;
+      margin: 0 0 8px;
+      color: var(--ink);
+    }
+
+    .brand span {
+      color: var(--accent);
+    }
+
+    .tagline {
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.05rem;
+      max-width: 36rem;
+      line-height: 1.55;
+    }
+
+    .status-bar {
+      margin-top: 22px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      animation: rise 0.8s 0.08s ease both;
+    }
+
+    .pill-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      border-radius: 999px;
+      padding: 10px 16px;
+      font-weight: 600;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 0 rgba(15, 118, 110, 0.45);
+      animation: pulse 1.8s infinite;
+    }
+
+    .dot.err { background: var(--danger); animation: none; }
+    .dot.busy { background: var(--warn); }
+
+    .scene-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    button, .btn {
+      font-family: var(--font-body);
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--ink);
+      border-radius: 12px;
+      padding: 10px 14px;
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+      font-size: 0.95rem;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      border-color: #99b4c8;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    button.ghost {
+      background: transparent;
+    }
+
+    button.active {
+      background: var(--accent-soft);
+      border-color: #5eead4;
+      color: #115e59;
+      font-weight: 700;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 18px;
+      margin-top: 20px;
+    }
+
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    section.panel {
+      background: rgba(255,255,255,0.86);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px 18px 16px;
+      animation: rise 0.75s ease both;
+    }
+
+    section.panel h2 {
+      font-family: var(--font-display);
+      font-size: 1.15rem;
+      margin: 0 0 6px;
+      letter-spacing: -0.02em;
+    }
+
+    section.panel .sub {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.45;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 8px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    .metric {
+      background: linear-gradient(180deg, #fff, #f8fafc);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .metric .label { color: var(--muted); font-size: 0.85rem; }
+    .metric .value {
+      font-family: var(--font-display);
+      font-size: 1.35rem;
+      font-weight: 700;
+      margin-top: 4px;
+    }
+    .metric.bad .value { color: var(--danger); }
+
+    .params {
+      display: grid;
+      gap: 14px;
+    }
+
+    .param {
+      position: relative;
+    }
+
+    .param-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 6px;
+    }
+
+    .param-name {
+      font-weight: 700;
+      cursor: help;
+      border-bottom: 1px dashed #94a3b8;
+      display: inline-block;
+    }
+
+    .param-val {
+      font-family: var(--font-display);
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    /* 호버 설명 카드 */
+    .explain {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: calc(100% + 8px);
+      z-index: 20;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+      padding: 14px 14px 12px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(6px);
+      transition: opacity 0.18s ease, transform 0.18s ease;
+    }
+
+    .param:hover .explain,
+    .param:focus-within .explain {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .explain h4 {
+      margin: 0 0 8px;
+      font-family: var(--font-display);
+      font-size: 1rem;
+    }
+
+    .explain hr {
+      border: none;
+      border-top: 1px solid var(--line);
+      margin: 8px 0;
+    }
+
+    .explain dl {
+      margin: 0;
+      display: grid;
+      gap: 8px;
+    }
+
+    .explain dt {
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
+    .explain dd {
+      margin: 2px 0 0;
+      line-height: 1.4;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .chip {
+      background: #f1f5f9;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 0.8rem;
+      color: #334155;
+    }
+
+    .chip.bad { background: #fee2e2; color: #991b1b; }
+    .chip.ok { background: #d1fae5; color: #065f46; }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    textarea, input[type="text"] {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-family: var(--font-body);
+      background: #fff;
+      resize: vertical;
+      min-height: 70px;
+    }
+
+    .wizard {
+      margin-top: 18px;
+      animation: rise 0.85s 0.05s ease both;
+    }
+
+    .wizard-track {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .wstep {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 14px;
+      padding: 12px;
+      cursor: pointer;
+      transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+      text-align: left;
+    }
+
+    .wstep:hover { transform: translateY(-2px); }
+    .wstep .n {
+      font-family: var(--font-display);
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+    .wstep .t { font-weight: 700; margin-top: 4px; }
+    .wstep .h { color: var(--muted); font-size: 0.82rem; margin-top: 6px; line-height: 1.35; }
+
+    .wstep.current {
+      border-color: #2dd4bf;
+      background: linear-gradient(180deg, #f0fdfa, #fff);
+      box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.18);
+      animation: glow 1.6s ease-in-out infinite;
+    }
+
+    .wstep.done {
+      opacity: 0.72;
+      border-color: #a7f3d0;
+    }
+
+    .analysis ul {
+      margin: 8px 0 0;
+      padding-left: 1.1rem;
+      line-height: 1.55;
+    }
+
+    .analysis li { margin-bottom: 6px; }
+
+    footer {
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.5;
+      animation: rise 0.9s ease both;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(15, 118, 110, 0.4); }
+      70% { box-shadow: 0 0 0 10px rgba(15, 118, 110, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
+    }
+
+    @keyframes glow {
+      0%, 100% { box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12); }
+      50% { box-shadow: 0 0 0 6px rgba(45, 212, 191, 0.22); }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <h1 class="brand">Go2 <span>입문 실험실</span></h1>
+      <p class="tagline">
+        로봇공학을 처음 배우는 사람을 위한 MuJoCo 실험 공간입니다.
+        파라미터를 바꾸고, 넘어지는 이유를 기록하며, 다음 실험을 스스로 설계해 보세요.
+      </p>
+      <div class="status-bar">
+        <div class="pill-status" id="statusPill">
+          <span class="dot" id="statusDot"></span>
+          <span id="statusText">연결 중…</span>
+        </div>
+        <div class="scene-btns">
+          <button id="btnFlat" class="primary" onclick="switchScene('flat')">평지</button>
+          <button id="btnTerrain" onclick="switchScene('terrain')">지형 장면</button>
+          <button class="ghost" onclick="startWizard()">실험 마법사</button>
+          <button class="ghost" onclick="restoreDefaults()">기본값 복원</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <div>
+        <section class="panel">
+          <h2>동작</h2>
+          <p class="sub">한 번에 하나의 동작을 관찰하세요. 결과가 궁금하면 아래 기록에 메모를 남기세요.</p>
+          <div class="actions">
+            <button onclick="setMode('stand')">서기</button>
+            <button onclick="setMode('lift_fl')">왼앞발 들기</button>
+            <button onclick="setMode('trot_inplace')">제자리 트로트</button>
+            <button onclick="setMode('walk_forward')">앞으로 걷기 실험</button>
+            <button onclick="setMode('motor_off')">모터 힘 끄기</button>
+            <button onclick="setMode('home')">home 초기화</button>
+            <button onclick="setMode('pause')">일시정지</button>
+          </div>
+        </section>
+
+        <section class="panel" style="margin-top:14px">
+          <h2>파라미터</h2>
+          <p class="sub">이름에 마우스를 올리면 교육용 설명 카드가 나타납니다.</p>
+          <div class="params" id="params"></div>
+          <div class="row">
+            <button class="primary" onclick="applyParams()">파라미터 적용</button>
+          </div>
+        </section>
+
+        <section class="panel wizard" id="wizardPanel" style="display:none">
+          <h2>실험 마법사</h2>
+          <p class="sub">추천 순서로 따라가며 “왜 이 실험이 필요한지”를 익힙니다.</p>
+          <div class="row">
+            <button onclick="wizardNav('prev')">이전</button>
+            <button class="primary" onclick="wizardNav('next')">다음 단계</button>
+            <button class="ghost" onclick="wizardNav('close')">닫기</button>
+          </div>
+          <div class="wizard-track" id="wizardTrack"></div>
+        </section>
+      </div>
+
+      <div>
+        <section class="panel">
+          <h2>상태</h2>
+          <p class="sub">로봇이 지금 어떻게 느끼는지 숫자로 읽어 보세요.</p>
+          <div class="metrics">
+            <div class="metric"><div class="label">몸통 높이</div><div class="value" id="mHeight">—</div></div>
+            <div class="metric"><div class="label">Roll</div><div class="value" id="mRoll">—</div></div>
+            <div class="metric"><div class="label">Pitch</div><div class="value" id="mPitch">—</div></div>
+            <div class="metric"><div class="label">속도</div><div class="value" id="mSpeed">—</div></div>
+            <div class="metric" id="mFallenBox"><div class="label">넘어짐 여부</div><div class="value" id="mFallen">—</div></div>
+            <div class="metric"><div class="label">현재 모드</div><div class="value" id="mMode" style="font-size:1.05rem">—</div></div>
+          </div>
+        </section>
+
+        <section class="panel" style="margin-top:14px">
+          <h2>실험 기록</h2>
+          <p class="sub">CSV(<code>go2_experiment_log.csv</code>)에 저장됩니다.</p>
+          <label for="memo" style="display:block;margin-bottom:6px;color:var(--muted)">메모</label>
+          <textarea id="memo" placeholder="예: Kp를 60으로 올리니 다리가 떨리며 넘어짐"></textarea>
+          <div class="row">
+            <button class="primary" onclick="saveLog()">기록 저장</button>
+            <button onclick="loadAnalysis()">결과 분석</button>
+          </div>
+        </section>
+
+        <section class="panel analysis" style="margin-top:14px">
+          <h2>자동 분석</h2>
+          <p class="sub" id="analysisCount">기록을 모으면 간단한 패턴을 알려줍니다.</p>
+          <ul id="analysisList">
+            <li>아직 분석 결과가 없습니다. 기록을 저장한 뒤 ‘결과 분석’을 눌러 보세요.</li>
+          </ul>
+        </section>
+      </div>
+    </div>
+
+    <footer>
+      Viewer는 worker 프로세스에서만 실행됩니다. 평지 ↔ 지형 전환 시 현재 Viewer를 종료한 뒤
+      새 worker를 시작합니다. Ctrl+C로 종료하면 worker도 함께 정리됩니다.
+    </footer>
+  </div>
+
+  <script>
+    const PARAM_META = {
+      kp: {
+        label: "Kp",
+        min: 10, max: 80, step: 1,
+        what: "목표 자세로 돌아가려는 힘",
+        when: "서지 못하거나 다리가 힘이 없을 때",
+        high: ["떨림", "튐", "진동"],
+        low: ["주저앉음", "반응 느림"],
+        range: "30~50",
+      },
+      kd: {
+        label: "Kd",
+        min: 0.2, max: 5, step: 0.1,
+        what: "빠른 움직임을 눌러 주는 감쇠",
+        when: "다리가 흔들리거나 출렁일 때",
+        high: ["반응 둔함", "동작이 무거움"],
+        low: ["진동", "출렁임"],
+        range: "1.5~2.5",
+      },
+      frequency: {
+        label: "Frequency",
+        min: 0.5, max: 3.5, step: 0.1,
+        what: "보행 주기(초당 스텝 리듬)",
+        when: "트로트·걷기 리듬을 바꿀 때",
+        high: ["발이 바빠짐", "균형 깨지기 쉬움"],
+        low: ["느리게 흔들림", "전진 약함"],
+        range: "1.2~2.0",
+      },
+      lift: {
+        label: "Lift",
+        min: 0.02, max: 0.3, step: 0.01,
+        what: "발을 들어 올리는 높이",
+        when: "턱·계단을 넘지 못할 때",
+        high: ["몸이 들썩임", "착지가 거칠어짐"],
+        low: ["발이 바닥에 걸림", "전진 실패"],
+        range: "0.08~0.18",
+      },
+      swing: {
+        label: "Swing",
+        min: 0.02, max: 0.25, step: 0.01,
+        what: "다리가 앞뒤로 움직이는 보폭",
+        when: "더 멀리/빠르게 걷고 싶을 때",
+        high: ["미끄러짐", "몸통이 앞뒤로 흔들림"],
+        low: ["제자리 걸음", "전진 거의 없음"],
+        range: "0.06~0.14",
+      },
+      forward_bias: {
+        label: "Forward Bias",
+        min: 0, max: 0.2, step: 0.01,
+        what: "앞으로 기울어 미는 편향",
+        when: "트로트는 되는데 앞으로 안 갈 때",
+        high: ["코가 숙어짐", "앞으로 고꾸라짐"],
+        low: ["전진 부족"],
+        range: "0.03~0.10",
+      },
+      torque_scale: {
+        label: "Torque Scale",
+        min: 0.3, max: 1.5, step: 0.05,
+        what: "모터 토크 전체 배율",
+        when: "전체적으로 힘이 약하거나 과할 때",
+        high: ["과도한 힘", "불안정"],
+        low: ["힘이 부족", "주저앉음"],
+        range: "0.8~1.2",
+      },
+    };
+
+    let state = null;
+    let paramValues = {};
+    let wizardOpen = false;
+
+    function el(id) { return document.getElementById(id); }
+
+    function buildParams(defaults) {
+      const root = el("params");
+      root.innerHTML = "";
+      Object.keys(PARAM_META).forEach((key) => {
+        const meta = PARAM_META[key];
+        const val = (defaults && defaults[key] != null) ? defaults[key] : meta.min;
+        paramValues[key] = val;
+        const box = document.createElement("div");
+        box.className = "param";
+        box.innerHTML = `
+          <div class="param-head">
+            <span class="param-name" tabindex="0">${meta.label}</span>
+            <span class="param-val" id="val_${key}">${Number(val).toFixed(meta.step < 1 ? 2 : 0)}</span>
+          </div>
+          <input type="range" id="rng_${key}" min="${meta.min}" max="${meta.max}" step="${meta.step}" value="${val}" />
+          <div class="explain">
+            <h4>${meta.label}</h4>
+            <hr />
+            <dl>
+              <div><dt>무엇인가</dt><dd>${meta.what}</dd></div>
+              <div><dt>언제 수정하는가</dt><dd>${meta.when}</dd></div>
+              <div>
+                <dt>너무 높으면</dt>
+                <dd class="chips">${meta.high.map(t => `<span class="chip bad">${t}</span>`).join("")}</dd>
+              </div>
+              <div>
+                <dt>너무 낮으면</dt>
+                <dd class="chips">${meta.low.map(t => `<span class="chip">${t}</span>`).join("")}</dd>
+              </div>
+              <div><dt>권장 범위</dt><dd><span class="chip ok">${meta.range}</span></dd></div>
+              <div><dt>현재 값</dt><dd id="explain_${key}">${val}</dd></div>
+            </dl>
+          </div>
+        `;
+        root.appendChild(box);
+        const rng = box.querySelector(`#rng_${key}`);
+        rng.addEventListener("input", () => {
+          const v = Number(rng.value);
+          paramValues[key] = v;
+          const text = v.toFixed(meta.step < 1 ? 2 : 0);
+          el(`val_${key}`).textContent = text;
+          el(`explain_${key}`).textContent = text;
+        });
+      });
+    }
+
+    async function api(path, opts) {
+      const res = await fetch(path, {
+        headers: { "Content-Type": "application/json" },
+        ...opts,
+      });
+      return res.json();
+    }
+
+    function renderStatus(s) {
+      state = s;
+      const text = s.ui_status || "—";
+      el("statusText").textContent = text;
+      const dot = el("statusDot");
+      dot.className = "dot";
+      if (text.includes("오류")) dot.classList.add("err");
+      else if (s.switching || text.includes("종료") || text.includes("불러")) dot.classList.add("busy");
+
+      const busy = !!s.switching;
+      el("btnFlat").disabled = busy;
+      el("btnTerrain").disabled = busy;
+      el("btnFlat").classList.toggle("active", s.scene === "flat");
+      el("btnTerrain").classList.toggle("active", s.scene === "terrain");
+      el("btnFlat").classList.toggle("primary", s.scene === "flat");
+      el("btnTerrain").classList.toggle("primary", s.scene === "terrain");
+
+      const st = s.status || {};
+      el("mHeight").textContent = (st.height != null) ? st.height.toFixed(3) + " m" : "—";
+      el("mRoll").textContent = (st.roll != null) ? (st.roll * 180 / Math.PI).toFixed(1) + "°" : "—";
+      el("mPitch").textContent = (st.pitch != null) ? (st.pitch * 180 / Math.PI).toFixed(1) + "°" : "—";
+      el("mSpeed").textContent = (st.speed != null) ? st.speed.toFixed(3) + " m/s" : "—";
+      el("mFallen").textContent = st.fallen ? "넘어짐" : "정상";
+      el("mFallenBox").classList.toggle("bad", !!st.fallen);
+      el("mMode").textContent = s.mode_label || s.mode || "—";
+
+      if (s.params) {
+        Object.keys(PARAM_META).forEach((key) => {
+          if (s.params[key] == null) return;
+          // 사용자가 드래그 중이 아닐 때만 동기화
+          const rng = el(`rng_${key}`);
+          if (!rng) return;
+          if (document.activeElement === rng) return;
+          const v = Number(s.params[key]);
+          paramValues[key] = v;
+          rng.value = v;
+          const meta = PARAM_META[key];
+          const textV = v.toFixed(meta.step < 1 ? 2 : 0);
+          el(`val_${key}`).textContent = textV;
+          const ex = el(`explain_${key}`);
+          if (ex) ex.textContent = textV;
+        });
+      }
+
+      if (wizardOpen) renderWizard(s);
+    }
+
+    function renderWizard(s) {
+      const steps = s.wizard_steps || [];
+      const idx = s.wizard_index;
+      const track = el("wizardTrack");
+      track.innerHTML = "";
+      steps.forEach((step, i) => {
+        const b = document.createElement("button");
+        b.className = "wstep";
+        if (i === idx) b.classList.add("current");
+        if (idx >= 0 && i < idx) b.classList.add("done");
+        b.innerHTML = `<div class="n">단계 ${i + 1}</div><div class="t">${step.title}</div><div class="h">${step.hint}</div>`;
+        b.onclick = () => api("/api/wizard", { method: "POST", body: JSON.stringify({ index: i }) }).then(renderStatus);
+        track.appendChild(b);
+      });
+    }
+
+    async function refresh() {
+      try {
+        const s = await api("/api/status");
+        renderStatus(s);
+      } catch (e) {
+        el("statusText").textContent = "서버 연결 끊김";
+        el("statusDot").className = "dot err";
+      }
+    }
+
+    async function switchScene(scene) {
+      el("btnFlat").disabled = true;
+      el("btnTerrain").disabled = true;
+      el("statusText").textContent = scene === "terrain" ? "Viewer 종료 중" : "Viewer 종료 중";
+      const s = await api("/api/scene", { method: "POST", body: JSON.stringify({ scene }) });
+      renderStatus(s);
+    }
+
+    async function setMode(mode) {
+      const s = await api("/api/mode", { method: "POST", body: JSON.stringify({ mode }) });
+      renderStatus(s);
+    }
+
+    async function applyParams() {
+      const s = await api("/api/params", { method: "POST", body: JSON.stringify(paramValues) });
+      renderStatus(s);
+    }
+
+    async function restoreDefaults() {
+      const s = await api("/api/defaults", { method: "POST", body: "{}" });
+      if (s.defaults) buildParams(s.defaults);
+      renderStatus(s);
+    }
+
+    async function saveLog() {
+      const memo = el("memo").value || "";
+      await api("/api/log", { method: "POST", body: JSON.stringify({ memo }) });
+      el("memo").value = "";
+      await loadAnalysis();
+      alert("기록을 저장했습니다.");
+    }
+
+    async function loadAnalysis() {
+      const a = await api("/api/analysis");
+      el("analysisCount").textContent = `총 ${a.count || 0}개 기록 분석`;
+      const ul = el("analysisList");
+      ul.innerHTML = "";
+      (a.insights || []).forEach((t) => {
+        const li = document.createElement("li");
+        li.textContent = t;
+        ul.appendChild(li);
+      });
+      (a.tips || []).forEach((t) => {
+        const li = document.createElement("li");
+        li.textContent = "다음 실험: " + t;
+        ul.appendChild(li);
+      });
+    }
+
+    async function startWizard() {
+      wizardOpen = true;
+      el("wizardPanel").style.display = "block";
+      const s = await api("/api/wizard", { method: "POST", body: JSON.stringify({ index: 0 }) });
+      renderStatus(s);
+      el("wizardPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    async function wizardNav(action) {
+      if (action === "close") {
+        wizardOpen = false;
+        el("wizardPanel").style.display = "none";
+      }
+      const s = await api("/api/wizard", { method: "POST", body: JSON.stringify({ action }) });
+      if (action !== "close") wizardOpen = true;
+      renderStatus(s);
+    }
+
+    buildParams({
+      kp: 40, kd: 2, frequency: 1.5, lift: 0.12,
+      swing: 0.08, forward_bias: 0.05, torque_scale: 1.0,
+    });
+    refresh();
+    setInterval(refresh, 400);
+    loadAnalysis();
+  </script>
+</body>
+</html>
