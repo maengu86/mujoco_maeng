@@ -14,12 +14,15 @@
     <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
       markrgb="0.8 0.8 0.8" width="300" height="300"/>
     <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <material name="practice_ramp_mat" rgba="0.78 0.82 0.88 1"/>
+    <material name="practice_top_mat" rgba="0.65 0.72 0.80 1"/>
   </asset>
 
   <worldbody>
     <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
 
+    <!-- 기존 낮은 턱 / 높은 계단 (정면 +X) -->
     <geom pos="1.2 0 0.04" type="box"  size="0.1 2 0.04" quat="1.0 0 0 0"/>
     <geom pos="1.6 0 0.04" type="box"  size="0.1 2 0.04" quat="1.0 0 0 0"/>
 
@@ -29,5 +32,23 @@
     <geom pos="3 0 0.02" type="box"  size="0.24 2 0.6" quat="1.0 0 0 0"/>
     <geom pos="3.2 0 0.02" type="box"  size="0.25 2 0.75" quat="1.0 0 0 0"/>
     <geom pos="3.4 0 0.02" type="box"  size="0.26 2 0.9" quat="1.0 0 0 0"/>
+
+    <!--
+      연습용 완만 경사 (~12°)
+      - 위치: Y=-2.2 (높은 계단과 분리된 옆길)
+      - 시작점 근처(x≈0.3)에서 +X 방향으로 올라감
+      - 마찰을 조금 높여 미끄러짐 완화
+    -->
+    <geom name="practice_ramp" type="box"
+          size="1.25 0.75 0.04"
+          pos="1.45 -2.2 0.26"
+          quat="0.9945 0 0.1045 0"
+          material="practice_ramp_mat"
+          friction="1.4 0.08 0.02"/>
+    <geom name="practice_ramp_top" type="box"
+          size="0.55 0.75 0.04"
+          pos="2.75 -2.2 0.52"
+          material="practice_top_mat"
+          friction="1.2 0.05 0.01"/>
   </worldbody>
 </mujoco>
